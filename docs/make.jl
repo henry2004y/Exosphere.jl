@@ -46,4 +46,3 @@ DocumenterVitepress.deploydocs(;
     devbranch = "main",
     push_preview = true,
 )
-

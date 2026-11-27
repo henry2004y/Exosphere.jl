@@ -128,4 +128,3 @@ end
 if abspath(PROGRAM_FILE) == @__FILE__
     run_planetary_exosphere_euv()
 end
-
