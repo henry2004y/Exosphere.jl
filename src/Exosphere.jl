@@ -7,8 +7,8 @@ box quadrature.
 """
 module Exosphere
 
-using Adapt: Adapt
 using LinearAlgebra: dot, norm
+using MuladdMacro: @muladd
 using PrecompileTools: @compile_workload, @setup_workload
 using StaticArrays: SVector
 

@@ -7,7 +7,11 @@
 
 Local volumetric photoionization production rate `nu_photo * neutral_n * atten`.
 """
-@inline function photoionization_rate(nu_photo::Real, neutral_n::Real, atten::Real = 1.0)
+@inline function photoionization_rate(
+        nu_photo::Real,
+        neutral_n::Real,
+        atten::Real = one(promote_type(typeof(nu_photo), typeof(neutral_n))),
+    )
     return nu_photo * neutral_n * atten
 end
 

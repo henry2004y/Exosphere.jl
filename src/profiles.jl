@@ -6,6 +6,18 @@ const _EXO_EXPONENTIAL = 1
 const _EXO_POWERLAW = 2
 const _EXO_CHAMBERLAIN = 3
 
+@inline function _fast_pow(base::FT, k::FT) where {FT <: AbstractFloat}
+    k == zero(FT) && return one(FT)
+    k == one(FT) && return base
+    k == FT(2) && return base * base
+    k == FT(3) && return base * base * base
+    if k == FT(4)
+        b2 = base * base
+        return b2 * b2
+    end
+    return base^k
+end
+
 """
     AbstractNeutralProfile
 
@@ -72,7 +84,7 @@ end
 
 @inline function neutral_density(p::PowerLawProfile{FT}, r::Real) where {FT}
     rf = FT(r)
-    return rf > p.r0 ? p.n0 * (p.r0 / rf)^p.k : p.n0
+    return rf > p.r0 ? p.n0 * _fast_pow(p.r0 / rf, p.k) : p.n0
 end
 
 @inline local_scale_height(p::PowerLawProfile{FT}, r::Real) where {FT} =
@@ -86,9 +98,13 @@ Chamberlain-type hydrostatic exosphere `n(r) = n0 * exp(-H * (1/r0 - 1/r))` for 
 struct ChamberlainProfile{FT <: AbstractFloat} <: AbstractNeutralProfile
     n0::FT
     r0::FT
+    inv_r0::FT
     H::FT
     center::SVector{3, FT}
 end
+
+ChamberlainProfile{FT}(n0::FT, r0::FT, H::FT, center::SVector{3, FT}) where {FT <: AbstractFloat} =
+    ChamberlainProfile{FT}(n0, r0, inv(r0), H, center)
 
 function ChamberlainProfile(
         n0::Real, r0::Real, H::Real;
@@ -98,13 +114,14 @@ function ChamberlainProfile(
     (isfinite(n0) && n0 >= 0) || throw(ArgumentError("ChamberlainProfile requires finite n0 >= 0"))
     (isfinite(r0) && r0 > 0) || throw(ArgumentError("ChamberlainProfile requires finite r0 > 0"))
     (isfinite(H) && H > 0) || throw(ArgumentError("ChamberlainProfile requires finite H > 0"))
+    r0_f = FT(r0)
     c = SVector{3, FT}(FT(center[1]), FT(center[2]), FT(center[3]))
-    return ChamberlainProfile{FT}(FT(n0), FT(r0), FT(H), c)
+    return ChamberlainProfile{FT}(FT(n0), r0_f, inv(r0_f), FT(H), c)
 end
 
-@inline function neutral_density(p::ChamberlainProfile{FT}, r::Real) where {FT}
+@inline @muladd function neutral_density(p::ChamberlainProfile{FT}, r::Real) where {FT}
     rf = FT(r)
-    return rf > p.r0 ? p.n0 * exp(-p.H * (inv(p.r0) - inv(rf))) : p.n0
+    return rf > p.r0 ? p.n0 * exp(-p.H * (p.inv_r0 - inv(rf))) : p.n0
 end
 
 @inline local_scale_height(p::ChamberlainProfile{FT}, r::Real) where {FT} =
@@ -159,7 +176,7 @@ end
     rf = Float64(r)
     val = p.n0
     if p.power > 0.0 && rf > p.r0
-        val *= (p.r0 / rf)^p.power
+        val *= _fast_pow(p.r0 / rf, p.power)
     end
     if p.inv_H > 0.0 && rf > p.r0
         val *= exp(-(rf - p.r0) * p.inv_H)
@@ -168,10 +185,17 @@ end
 end
 
 @inline (p::ExosphereProfile)(x::Real) = neutral_density(p, abs(Float64(x) - p.center[1]))
-@inline (p::ExosphereProfile)(x::Real, y::Real) =
-    neutral_density(p, hypot(Float64(x) - p.center[1], Float64(y) - p.center[2]))
-@inline (p::ExosphereProfile)(x::Real, y::Real, z::Real) =
-    neutral_density(p, hypot(Float64(x) - p.center[1], Float64(y) - p.center[2], Float64(z) - p.center[3]))
+@inline @muladd function (p::ExosphereProfile)(x::Real, y::Real)
+    dx = Float64(x) - p.center[1]
+    dy = Float64(y) - p.center[2]
+    return neutral_density(p, sqrt(dx * dx + dy * dy))
+end
+@inline @muladd function (p::ExosphereProfile)(x::Real, y::Real, z::Real)
+    dx = Float64(x) - p.center[1]
+    dy = Float64(y) - p.center[2]
+    dz = Float64(z) - p.center[3]
+    return neutral_density(p, sqrt(dx * dx + dy * dy + dz * dz))
+end
 
 """
     NeutralComponentCode(kind, n0, H, k, T0, name)
@@ -183,10 +207,14 @@ struct NeutralComponentCode
     kind::Int
     n0::Float64
     H::Float64
+    inv_H::Float64
     k::Float64
     T0::Float64
     name::String
 end
+
+NeutralComponentCode(kind::Int, n0::Float64, H::Float64, k::Float64, T0::Float64, name::String) =
+    NeutralComponentCode(kind, n0, H, H > 0.0 ? inv(H) : 0.0, k, T0, name)
 
 function NeutralComponentCode(
         profile::Symbol, n0::Real, H::Real, k::Real, T0::Real, name::AbstractString = "neutral"
@@ -200,5 +228,6 @@ function NeutralComponentCode(
         throw(ArgumentError("NeutralComponentCode $name: profile :$profile needs H > 0"))
     T0f = Float64(T0)
     T0f > 0.0 || throw(ArgumentError("NeutralComponentCode $name: T0 must be positive"))
-    return NeutralComponentCode(kind, Float64(n0), Hf, Float64(k), T0f, String(name))
+    inv_H = Hf > 0.0 ? inv(Hf) : 0.0
+    return NeutralComponentCode(kind, Float64(n0), Hf, inv_H, Float64(k), T0f, String(name))
 end
