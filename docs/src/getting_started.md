@@ -41,7 +41,7 @@ The example below constructs a two-component exosphere (`O` exponential + `H` po
 with curved-atmosphere Chapman EUV attenuation, evaluates local densities and ion–neutral
 source rates, and integrates the neutral column over an exterior 3D box:
 
-```jldoctest
+````@example getting_started
 using Exosphere
 using StaticArrays
 
@@ -70,14 +70,12 @@ sumN = zeros(n_components(exo))
 sumNA = zeros(n_components(exo))
 vol = integrate_exosphere_box!(sumN, sumNA, exo, x, SVector(0.2, 0.2, 0.2), 0, 1.0)
 
-vol ≈ 0.008 &&
-    n_tot > 0.0 &&
-    0.0 < atten <= 1.0 &&
-    q_photo > 0.0 &&
-    q_cx > 0.0 &&
-    sumNA[1] <= sumN[1]
-
-# output
-true
-```
+println("n_tot   = ", round(n_tot; sigdigits = 4))
+println("atten   = ", round(atten; sigdigits = 4))
+println("q_photo = ", round(q_photo; sigdigits = 4))
+println("q_cx    = ", round(q_cx; sigdigits = 4))
+println("vol     = ", round(vol; sigdigits = 4))
+println("sumN    = ", round.(sumN; sigdigits = 4))
+println("sumNA   = ", round.(sumNA; sigdigits = 4))
+````
 

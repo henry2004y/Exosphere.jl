@@ -37,7 +37,7 @@ quadrature for space and planetary plasma simulations.
 
 ## Quick Example
 
-```julia
+````@example index_quick
 using Exosphere
 using StaticArrays
 
@@ -72,5 +72,10 @@ q_cx = charge_exchange_rate(2.0e-19, 5.0, n_tot, 4.0e5)
 sumN = zeros(n_components(exo))
 sumNA = zeros(n_components(exo))
 vol = integrate_exosphere_box!(sumN, sumNA, exo, x, SVector(0.2, 0.2, 0.2), 0, 1.0)
-```
+
+println("n_local = ", round(n_local; sigdigits = 4))
+println("n_tot   = ", round(n_tot; sigdigits = 4), ", atten = ", round(atten; sigdigits = 4))
+println("q_photo = ", round(q_photo; sigdigits = 4), ", q_cx = ", round(q_cx; sigdigits = 4))
+println("vol     = ", vol, ", sumN = ", round.(sumN; sigdigits = 4), ", sumNA = ", round.(sumNA; sigdigits = 4))
+````
 

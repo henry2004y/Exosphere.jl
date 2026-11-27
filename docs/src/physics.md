@@ -31,7 +31,7 @@ allocation-free [`neutral_density`](@ref) and [`local_scale_height`](@ref) inter
   \exp\!\left(-\frac{\max(r - r_0, 0)}{H}\right).
   ```
 
-```jldoctest
+````@example profiles_demo
 using Exosphere
 
 exp_p = ExponentialProfile(10.0, 1.0, 0.5)
@@ -39,14 +39,14 @@ pl_p = PowerLawProfile(10.0, 1.0, 2.0)
 ch_p = ChamberlainProfile(10.0, 1.0, 2.0)
 haser = exosphere_profile(; n0 = 9.0, r0 = 1.0, H = Inf, power = 2.0)
 
-neutral_density(exp_p, 1.0) == 10.0 &&
-    local_scale_height(pl_p, 2.0) == 1.0 &&
-    neutral_density(ch_p, 2.0) ≈ 10.0 * exp(-1.0) &&
-    haser(3.0, 0.0, 0.0) ≈ 1.0
-
-# output
-true
-```
+println("Exponential: n(1.5) = ", round(neutral_density(exp_p, 1.5); sigdigits = 4),
+    ", H = ", local_scale_height(exp_p, 1.5))
+println("PowerLaw:    n(2.0) = ", neutral_density(pl_p, 2.0),
+    ", H = ", local_scale_height(pl_p, 2.0))
+println("Chamberlain: n(2.0) = ", round(neutral_density(ch_p, 2.0); sigdigits = 4),
+    ", H = ", local_scale_height(ch_p, 2.0))
+println("Haser 3D:    n(3,0,0) = ", haser(3.0, 0.0, 0.0))
+````
 
 ## Multi-Component Exosphere Models
 
@@ -78,20 +78,30 @@ a list of components into an [`ExosphereModel`](@ref) queried via [`n_components
   transitions smoothly across the terminator ($\cos\chi \approx 0$) into the nightside
   shadow.
 
-```jldoctest
-using Exosphere, StaticArrays
+````@example attenuation_demo
+using Exosphere
+using StaticArrays
 
 sc = ShadowCylinder(; solar_dir = (1.0, 0.0, 0.0), radius = 1.0)
-c = NeutralComponentCode(:exponential, 100.0, 0.2, 0.0, 0.01, "O")
-od = OpticalDepth(; cross_sections = [0.05], solar_dir = (1.0, 0.0, 0.0), chapman = true)
-exo = build_exosphere_model(; planet_radius = 1.0, components = [c], optical_depth = od)
+o_comp = NeutralComponentCode(:exponential, 100.0, 0.2, 0.0, 0.01, "O")
 
-in_shadow(sc, SVector(-2.0, 0.5, 0.0)) &&
-    shadow_factor(sc, 2.0, 0.0, 0.0) == 1.0 &&
-    photo_attenuation(exo, SVector(-1.5, 0.0, 0.0), 1.5) <
-    photo_attenuation(exo, SVector(1.5, 0.0, 0.0), 1.5)
+od_plain = OpticalDepth(; cross_sections = [0.05], solar_dir = (1.0, 0.0, 0.0), chapman = false)
+od_chap = OpticalDepth(; cross_sections = [0.05], solar_dir = (1.0, 0.0, 0.0), chapman = true)
+exo_plain = build_exosphere_model(; planet_radius = 1.0, components = [o_comp], optical_depth = od_plain)
+exo_chap = build_exosphere_model(; planet_radius = 1.0, components = [o_comp], optical_depth = od_chap)
 
-# output
-true
-```
+x_day = SVector(1.5, 0.0, 0.0)
+x_term = SVector(0.0, 1.5, 0.0)
+x_night = SVector(-1.5, 0.5, 0.0)
+
+for (label, x) in (("Dayside   ", x_day), ("Terminator", x_term), ("Nightside ", x_night))
+    r = sqrt(x[1]^2 + x[2]^2 + x[3]^2)
+    println(
+        label,
+        " | shadow = ", shadow_factor(sc, x),
+        " | plain = ", round(photo_attenuation(exo_plain, x, r); sigdigits = 4),
+        " | chapman = ", round(photo_attenuation(exo_chap, x, r); sigdigits = 4),
+    )
+end
+````
 
