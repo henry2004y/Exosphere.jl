@@ -1,0 +1,13 @@
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+Exosphere = "47cd2838-a960-420f-862c-bf8cfebb7396"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[sources]
+Exosphere = {path = ".."}
+
+[compat]
+BenchmarkTools = "1"
+Exosphere = "0.1"
+StaticArrays = "1"
+julia = "1.11"
