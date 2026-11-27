@@ -27,10 +27,12 @@ end
     integrate_exosphere_box!(sumN, sumNA, exo::ExosphereModel, c::SVector{3, Float64},
                              h::SVector{3, Float64}, depth::Int, rcut::Float64) -> Float64
 
-Adaptively integrate per-component neutral density (`sumN`) and EUV-attenuated neutral
-density (`sumNA`) over a box centered at `c` (relative to `exo.center`) with side widths
-`h` (set `h[d] == 0` for collapsed 2D axes), excluding the sphere `r < rcut`. Returns the
-integrated exterior volume.
+Adaptively accumulate per-component neutral density (`sumN`) and EUV-attenuated neutral
+density (`sumNA`) in place over an axis-aligned box centered at `c` (relative to
+`exo.center`) with side widths `h`, excluding the interior sphere `r < rcut`. Pass
+`depth = 0` at the top level; set `h[d] <= 0` for collapsed 2D axes. Non-straddling cells
+apply the analytic ``\\sinh(b)/b`` finite-cell correction along each axis. Returns the
+integrated exterior volume (or area when one axis is collapsed).
 """
 @muladd function integrate_exosphere_box!(
         sumN, sumNA, exo::ExosphereModel, c::SVector{3, Float64}, h::SVector{3, Float64},

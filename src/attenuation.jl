@@ -3,10 +3,11 @@
 # ==============================================================================
 
 """
-    ShadowCylinder(dir, radius, half_height)
+    ShadowCylinder(; solar_dir = (1.0, 0.0, 0.0), radius = 1.0, half_height = Inf)
 
-Geometric cylindrical planetary EUV/optical shadow along unit `dir` (pointing toward the Sun)
-of `radius` and downstream `half_height` (defaults to `Inf`).
+Geometric cylindrical planetary EUV/optical shadow along unit vector `dir` (normalized from
+`solar_dir`, pointing toward the Sun) of cross-sectional `radius` and downstream
+`half_height` (defaults to `Inf`).
 """
 struct ShadowCylinder
     dir::SVector{3, Float64}
@@ -44,6 +45,7 @@ end
 
 """
     shadow_factor(sc::ShadowCylinder, x::SVector{3, Float64}) -> Float64
+    shadow_factor(sc::ShadowCylinder, x::Real, y::Real, z::Real) -> Float64
 
 Return `0.0` inside the shadow cylinder and `1.0` outside.
 """
@@ -53,12 +55,19 @@ Return `0.0` inside the shadow cylinder and `1.0` outside.
     shadow_factor(sc, SVector{3, Float64}(Float64(x), Float64(y), Float64(z)))
 
 """
-    OpticalDepth(sigma, H, dir, chapman, min_production, tau_floor, tau_cutoff,
-                 cos_sza_floor, chapman_tau_max, chapman_component)
+    OpticalDepth(; cross_sections, solar_dir = (1.0, 0.0, 0.0), scale_heights = nothing,
+                 chapman = false, min_production = nothing, tau_floor = 6.0e-3,
+                 tau_cutoff = 11.5, cos_sza_floor = 5.0e-4, chapman_tau_max = 13.8,
+                 chapman_component = nothing)
 
 Code-unit EUV attenuation model supporting multi-component vertical optical depth
 ``\\tau = \\sum_c n_c \\sigma_c H_c``, grazing-ray terminator transmission, and the
 curved-atmosphere Smith & Smith (1972) Chapman function (`chapman = true`).
+
+When `scale_heights` is `nothing` (or has `nothing` entries), per-component local scale
+heights are inferred from the neutral component profile. When `chapman = true` and
+`chapman_component` is `nothing`, [`build_exosphere_model`](@ref) selects the component
+with the largest surface optical depth ``n_c(R_p) \\sigma_c H_c``.
 """
 struct OpticalDepth
     sigma::Vector{Float64}
@@ -108,10 +117,10 @@ function OpticalDepth(;
 end
 
 """
-    ExosphereModel(Rp, center, comps, shadow, optical, inner_radius, photochem_radius)
+    ExosphereModel
 
 Multi-component code-unit planetary neutral exosphere with optional [`ShadowCylinder`](@ref)
-or [`OpticalDepth`](@ref) attenuation.
+or [`OpticalDepth`](@ref) EUV attenuation. Construct via [`build_exosphere_model`](@ref).
 """
 struct ExosphereModel
     Rp::Float64
@@ -164,6 +173,18 @@ end
     return @inbounds _component_scale_height(comps[c], r)
 end
 
+"""
+    build_exosphere_model(; planet_radius, components, center = (0.0, 0.0, 0.0),
+                          shadow = nothing, optical_depth = nothing,
+                          inner_radius = 0.0, photochem_radius = 0.0) -> ExosphereModel
+
+Construct and validate a multi-component [`ExosphereModel`](@ref) from a non-empty vector
+of [`NeutralComponentCode`](@ref) species. `shadow` ([`ShadowCylinder`](@ref)) and
+`optical_depth` ([`OpticalDepth`](@ref)) are mutually exclusive; when neither is provided,
+[`photo_attenuation`](@ref) returns `1.0` everywhere. For `optical_depth` with
+`chapman = true` and `chapman_component == 0`, the component with the largest surface
+vertical optical depth at `planet_radius` is chosen automatically.
+"""
 function build_exosphere_model(;
         planet_radius::Real,
         components::AbstractVector{NeutralComponentCode},

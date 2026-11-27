@@ -1,5 +1,7 @@
 # Exosphere.jl
 
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://henry2004y.github.io/Exosphere.jl/stable)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://henry2004y.github.io/Exosphere.jl/dev)
 [![CI](https://github.com/henry2004y/Exosphere.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/henry2004y/Exosphere.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/henry2004y/Exosphere.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/henry2004y/Exosphere.jl)
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
@@ -16,11 +18,9 @@ Standalone, zero-allocation planetary neutral exosphere profiles, EUV shadow and
 
 ## Installation
 
-`Exosphere.jl` is registered in [LingXiaoRegistry](https://github.com/henry2004y/LingXiaoRegistry). You can install it directly from GitHub or a local checkout:
-
 ```julia
 using Pkg
-Pkg.add(url = "https://github.com/henry2004y/Exosphere.jl.git")
+Pkg.add("Exosphere")
 ```
 
 Or for local development:
@@ -69,6 +69,14 @@ sumNA = zeros(n_components(exo))
 vol = integrate_exosphere_box!(sumN, sumNA, exo, x, SVector(0.2, 0.2, 0.2), 0, 1.0)
 ```
 
+## Examples
+
+- [`examples/planetary_exosphere_euv.jl`](examples/planetary_exosphere_euv.jl): Generates a 3-panel visualization of a 3-component Mars-like exosphere (`O`, `H`, `He`) with Chapman EUV optical-depth attenuation and volumetric photoionization production rates (requires `CairoMakie`):
+
+```bash
+julia --project=/path/to/env-with-CairoMakie examples/planetary_exosphere_euv.jl
+```
+
 ## Public API
 
 - **Neutral profiles**: `AbstractNeutralProfile`, `ExponentialProfile`, `PowerLawProfile`, `ChamberlainProfile`, `ExosphereProfile`, `exosphere_profile`, `neutral_density`, `local_scale_height`.
@@ -78,7 +86,7 @@ vol = integrate_exosphere_box!(sumN, sumNA, exo, x, SVector(0.2, 0.2, 0.2), 0, 1
 
 ## Testing & Benchmarking
 
-Run the unit and `Aqua.jl` quality test suite:
+Run the unit, `Aqua.jl`, and `ExplicitImports.jl` quality test suite:
 
 ```bash
 julia --project=Exosphere.jl -e 'using Pkg; Pkg.test()'

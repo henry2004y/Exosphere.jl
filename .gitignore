@@ -1,5 +1,15 @@
 Manifest.toml
-*.jl.cov
+test/Manifest.toml
+benchmark/Manifest.toml
+docs/Manifest.toml
+LocalPreferences.toml
+*.cov
+*.mem
 *.jl.*.cov
-*.jl.mem
+lcov.info
 docs/build/
+docs/node_modules/
+docs/package.json
+docs/package-lock.json
+docs/src/.vitepress/
+docs/src/assets/planetary_exosphere_euv.png

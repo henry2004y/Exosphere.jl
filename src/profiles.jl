@@ -27,8 +27,10 @@ abstract type AbstractNeutralProfile end
 
 """
     ExponentialProfile{FT<:AbstractFloat} <: AbstractNeutralProfile
+    ExponentialProfile(n0, r0, H; center = (0.0, 0.0, 0.0), FT = Float64)
 
-Exponential neutral exosphere `n(r) = n0 * exp(-max(r - r0, 0) / H)` around `center`.
+Exponential neutral exosphere `n(r) = n0 * exp(-max(r - r0, 0) / H)` around `center`,
+clamped to `n0` for `r <= r0`. Setting `H = Inf` yields a uniform density `n0`.
 """
 struct ExponentialProfile{FT <: AbstractFloat} <: AbstractNeutralProfile
     n0::FT
@@ -50,18 +52,34 @@ function ExponentialProfile(
     return ExponentialProfile{FT}(FT(n0), FT(r0), inv_H, c)
 end
 
+"""
+    neutral_density(p::AbstractNeutralProfile, r::Real)
+
+Evaluate the radial neutral number density of profile `p` (`ExponentialProfile`,
+`PowerLawProfile`, `ChamberlainProfile`, or `ExosphereProfile`) at radius `r`, clamped to
+`n0` for `r <= r0`.
+"""
 @inline function neutral_density(p::ExponentialProfile{FT}, r::Real) where {FT}
     h = max(FT(r) - p.r0, zero(FT))
     return p.n0 * exp(-h * p.inv_H)
 end
 
+"""
+    local_scale_height(p::AbstractNeutralProfile, r::Real)
+
+Return the local density scale height ``-1 / (d\\ln n / dr)`` of profile `p` at radius `r`
+(`H` for `ExponentialProfile`, `r / k` for `PowerLawProfile`, and `r^2 / H` for
+`ChamberlainProfile`; returns `0` when degenerate or `r <= 0`).
+"""
 @inline local_scale_height(p::ExponentialProfile{FT}, ::Real) where {FT} =
     p.inv_H > zero(FT) ? inv(p.inv_H) : zero(FT)
 
 """
     PowerLawProfile{FT<:AbstractFloat} <: AbstractNeutralProfile
+    PowerLawProfile(n0, r0, k; center = (0.0, 0.0, 0.0), FT = Float64)
 
-Power-law neutral density profile `n(r) = n0 * (r0 / max(r, r0))^k` around `center`.
+Power-law neutral density profile `n(r) = n0 * (r0 / max(r, r0))^k` around `center`,
+clamped to `n0` for `r <= r0`.
 """
 struct PowerLawProfile{FT <: AbstractFloat} <: AbstractNeutralProfile
     n0::FT
@@ -92,8 +110,10 @@ end
 
 """
     ChamberlainProfile{FT<:AbstractFloat} <: AbstractNeutralProfile
+    ChamberlainProfile(n0, r0, H; center = (0.0, 0.0, 0.0), FT = Float64)
 
-Chamberlain-type hydrostatic exosphere `n(r) = n0 * exp(-H * (1/r0 - 1/r))` for `r >= r0`.
+Chamberlain-type hydrostatic exosphere `n(r) = n0 * exp(-H * (1/r0 - 1/r))` around `center`,
+clamped to `n0` for `r <= r0`.
 """
 struct ChamberlainProfile{FT <: AbstractFloat} <: AbstractNeutralProfile
     n0::FT
@@ -198,10 +218,12 @@ end
 end
 
 """
-    NeutralComponentCode(kind, n0, H, k, T0, name)
+    NeutralComponentCode(profile::Symbol, n0, H, k, T0, name = "neutral")
 
-Code-unit specification of one neutral exosphere component (`kind` in
-`1 = :exponential`, `2 = :powerlaw`, `3 = :chamberlain`).
+Code-unit specification of one neutral exosphere component, where `profile` is one of
+`:exponential`, `:powerlaw`, or `:chamberlain` (internally encoded as `kind` `1`, `2`, `3`),
+`n0` is the surface density at `planet_radius`, `H` is the exponential/Chamberlain scale
+parameter, `k` is the power-law exponent, and `T0 > 0` is the neutral temperature.
 """
 struct NeutralComponentCode
     kind::Int
