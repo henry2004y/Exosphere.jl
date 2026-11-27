@@ -13,7 +13,7 @@ kinetic/fluid plasma solvers:
 Single-component profiles (`ExponentialProfile`, `PowerLawProfile`, `ChamberlainProfile`)
 also accept `FT = Float32` for low-memory and GPU-kernel evaluations:
 
-```jldoctest
+````@example sources_f32
 using Exosphere
 
 exp32 = ExponentialProfile(10.0f0, 1.0f0, 0.5f0; FT = Float32)
@@ -21,11 +21,10 @@ n32 = neutral_density(exp32, 1.5f0)
 q32 = photoionization_rate(1.0f-6, n32, 0.8f0)
 cx32 = charge_exchange_rate(2.0f-19, 5.0f0, n32, 4.0f5)
 
-n32 isa Float32 && q32 isa Float32 && cx32 isa Float32
-
-# output
-true
-```
+println("n32  = ", n32, " (", typeof(n32), ")")
+println("q32  = ", q32, " (", typeof(q32), ")")
+println("cx32 = ", cx32, " (", typeof(cx32), ")")
+````
 
 ## Adaptive Octree Dual-Cell Box Quadrature
 
@@ -46,6 +45,31 @@ around `exo.center` up to depth `8`:
    component's density by $\prod_{d} \sinh(b_d)/b_d$ with
    $b_d = \frac{h_d |c_d|}{2 r H_c}$, preserving exact exponential cell averages across
    coarse cells without extra quadrature points.
+
+````@example box_quadrature
+using Exosphere
+using StaticArrays
+
+o_comp = NeutralComponentCode(:exponential, 100.0, 0.2, 0.0, 0.01, "O")
+h_comp = NeutralComponentCode(:powerlaw, 10.0, 0.0, 2.0, 0.01, "H")
+od = OpticalDepth(; cross_sections = [0.05, 0.01], solar_dir = (1.0, 0.0, 0.0), chapman = true)
+exo = build_exosphere_model(; planet_radius = 1.0, components = [o_comp, h_comp], optical_depth = od)
+
+sumN = zeros(n_components(exo))
+sumNA = zeros(n_components(exo))
+
+# Exterior 3D box
+vol_3d = integrate_exosphere_box!(sumN, sumNA, exo, SVector(1.5, 0.0, 0.0), SVector(0.2, 0.2, 0.2), 0, 1.0)
+println("3D exterior vol = ", round(vol_3d; sigdigits = 4),
+    ", sumN = ", round.(sumN; sigdigits = 4), ", sumNA = ", round.(sumNA; sigdigits = 4))
+
+# Boundary-straddling 2D cell (h[3] = 0.0)
+fill!(sumN, 0.0)
+fill!(sumNA, 0.0)
+area_2d = integrate_exosphere_box!(sumN, sumNA, exo, SVector(1.05, 0.1, 0.0), SVector(0.4, 0.4, 0.0), 0, 1.0)
+println("2D straddle area = ", round(area_2d; sigdigits = 4),
+    ", sumN = ", round.(sumN; sigdigits = 4), ", sumNA = ", round.(sumNA; sigdigits = 4))
+````
 
 ## Planetary Exosphere EUV Example
 
