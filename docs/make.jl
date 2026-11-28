@@ -32,6 +32,7 @@ makedocs(;
             "Getting Started" => "getting_started.md",
             "Profiles & Attenuation" => "physics.md",
             "Sources & Quadrature" => "quadrature_coupling.md",
+            "Two-Way Coupling & Extensions" => "two_way_coupling.md",
         ],
         "API Reference" => "api.md",
     ],

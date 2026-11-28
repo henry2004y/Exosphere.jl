@@ -7,14 +7,16 @@
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Standalone, zero-allocation planetary neutral exosphere profiles, EUV shadow and optical-depth/Chapman attenuation, ion–neutral source rates, and adaptive dual-cell box quadrature for space and planetary plasma simulations.
+Standalone, zero-allocation planetary neutral exosphere models, `PlasmaPopulations.jl`-style neutral species and VDFs, EUV shadow / optical-depth / Chapman / ray attenuation, conservative one-way and two-way charge–neutral interaction kernels, structured neutral field containers, and adaptive dual-cell box quadrature for space and planetary plasma simulations.
 
 ## Key Features
 
-- **Allocation-Free Neutral Density Profiles**: Concrete `AbstractNeutralProfile` implementations—`ExponentialProfile`, `PowerLawProfile`, `ChamberlainProfile`, and the callable 1D/2D/3D `ExosphereProfile` (`exosphere_profile`)—supporting planetary exospheres and cometary $1/r^2$ Haser-limit comae with zero heap allocations.
-- **Multi-Component Exosphere & EUV Attenuation**: Combine multiple `NeutralComponentCode` species (`:exponential`, `:powerlaw`, `:chamberlain`) in `ExosphereModel` (`build_exosphere_model`) with either geometric cylindrical shadowing (`ShadowCylinder`, `in_shadow`, `shadow_factor`) or curved-atmosphere `OpticalDepth` / Smith & Smith (1972) `chapman_function` EUV attenuation (`photo_attenuation`).
-- **Pointwise Ion–Neutral Source Rates**: Lightweight, `@inline` helpers for local volumetric photoionization (`photoionization_rate`) and resonant charge-exchange (`charge_exchange_rate`) rates.
-- **Adaptive Octree Dual-Cell Quadrature**: `integrate_exosphere_box!` adaptively subdivides 2D or 3D cells near sharp scale heights and inner planetary boundaries ($r < r_{\text{cut}}$) to integrate neutral column and EUV-attenuated production densities.
+- **Neutral Species, VDFs & Populations (`PlasmaPopulations.jl` Style)**: `isbits` `NeutralSpecies` (with chemical/nuclide formula parsing for atoms and planetary molecules), `AbstractNeutralVDF` (`ColdNeutral`, `Maxwellian`, `BiMaxwellianNeutral` with `pdf`, `mean`, `cov`, and zero-allocation `rand`), and composable `NeutralPopulation`s.
+- **1D Radial, 3D Asymmetric & Time-Dependent Profiles**: Allocation-free, `ForwardDiff`-compatible `AbstractNeutralProfile` implementations—`ExponentialProfile`, `PowerLawProfile`, `ChamberlainProfile`, callable 1D/2D/3D `ExosphereProfile`, `DayNightProfile`, `PlumeProfile`, `CompositeProfile`, `TabulatedRadialProfile`, and `TimeDependentProfile`—paired with composable kinematics (`ZeroVelocity`, `ConstantVelocity`, `CorotationVelocity`, `RadialOutflowVelocity`) and temperature models (`ConstantTemperature`, `DayNightTemperature`).
+- **Multi-Species GPU-Ready Exosphere & EUV Attenuation**: Combine `NeutralPopulation` tuples into an `isbits`, GPU-ready `ExosphereModel` (or use legacy `NeutralComponentCode` vectors via `build_exosphere_model`) with `NoAttenuation`, cylindrical shadowing (`ShadowCylinder`), curved-atmosphere `OpticalDepth` / Smith & Smith (1972) `chapman_function`, or 3D/dynamic line-of-sight `RayOpticalDepth`.
+- **Zero-Overhead One-Way & Self-Consistent Two-Way Coupling**: Compile-time coupling traits (`OneWayCoupling` vs. `TwoWayCoupling`), conservative Eulerian exchange channels (`Photoionization`, `ElectronImpactIonization`, `ResonantChargeExchange`, `NonResonantChargeExchange`, `ElasticCollision`, `Recombination`), kinetic/Hybrid-PIC collision & ENA helpers, and structured `GriddedNeutralField` (`CartesianNeutralGrid`, `SphericalNeutralGrid`, `NeutralSourceBuffer` with conservative CIC deposition, `NeutralParticleBuffer`).
+- **Adaptive Octree Dual-Cell Quadrature**: `integrate_exosphere_box!` adaptively subdivides 2D or 3D cells near sharp scale heights and inner planetary boundaries ($r < r_{\text{cut}}$) with analytic $\sinh(b)/b$ finite-cell corrections.
+- **Optional Package Extensions**: Zero-cost weak-dependency extensions for `Unitful.jl` (dimensional `UnitScale`, `UnitfulProfile`, `strip_units`), `Adapt.jl` (GPU array migration), and `PlasmaPopulations.jl` (`Particle`/`Population`/`VDF` bridges).
 
 ## Installation
 
@@ -32,41 +34,64 @@ Pkg.develop(path = "/path/to/Exosphere.jl")
 
 ## Quick Start
 
+### 1. GPU-Ready Static One-Way Exosphere & Conservative Coupling
+
 ```julia
 using Exosphere
 using StaticArrays
 
-# 1. Single-component callable 1D/2D/3D radial profile
-ep = exosphere_profile(; n0 = 1.0e4, r0 = 1.0, H = 0.25)
-n_local = ep(1.5, 0.2, 0.0)
+sp_o = NeutralSpecies(; m = 16.0)
+sp_h = NeutralSpecies(; m = 1.0)
+pop_o = NeutralPopulation(
+    sp_o,
+    ExponentialProfile(100.0, 1.0, 0.2);
+    velocity = CorotationVelocity((0.0, 0.0, 0.01)),
+    temperature = ConstantTemperature(0.01),
+)
+pop_h = NeutralPopulation(
+    sp_h,
+    PowerLawProfile(10.0, 1.0, 2.0),
+    Maxwellian(sp_h; T = 0.02),
+)
+od = OpticalDepth(; cross_sections = (0.05, 0.01), chapman = true)
+exo = ExosphereModel(pop_o, pop_h; planet_radius = 1.0, optical_depth = od)
+@assert isbits(exo)
 
-# 2. Multi-component exosphere with Chapman EUV optical-depth attenuation
+x = SVector(1.5, 0.0, 0.0)
+ion = PlasmaState(5.0, SVector(-2.0, 0.0, 0.0), 0.1, 16.0)
+channels = (Photoionization(1.0e-6), ResonantChargeExchange(2.0e-3))
+
+# One-way coupling: neutral feedback deposition compiles away to zero instructions
+plasma_src = couple_point!(exo, x, channels, ion; species = 1)
+```
+
+### 2. Two-Way Dynamic Gridded Coupling (Same Solver Loop)
+
+```julia
+grid = CartesianNeutralGrid((-2.0, -2.0, -2.0), (0.5, 0.5, 0.5), (9, 9, 9))
+field = GriddedNeutralField(grid, 2; masses = (16.0, 1.0), two_way = true)
+sample_to_grid!(field, exo)
+
+reset_sources!(field)
+plasma_src = couple_point!(field, x, channels, ion; species = 1)
+# External neutral solver reads neutral_sources(field) (dn, dmom, dE)
+```
+
+### 3. Legacy `NeutralComponentCode` & Adaptive Box Quadrature
+
+```julia
 o_comp = NeutralComponentCode(:exponential, 100.0, 0.2, 0.0, 0.01, "O")
 h_comp = NeutralComponentCode(:powerlaw, 10.0, 0.0, 2.0, 0.01, "H")
-od = OpticalDepth(;
-    cross_sections = [0.05, 0.01],
-    solar_dir = (1.0, 0.0, 0.0),
-    chapman = true,
-)
-exo = build_exosphere_model(;
+exo_legacy = build_exosphere_model(;
     planet_radius = 1.0,
     components = [o_comp, h_comp],
-    optical_depth = od,
+    optical_depth = OpticalDepth(; cross_sections = [0.05, 0.01], chapman = true),
     inner_radius = 1.0,
 )
 
-# 3. Evaluate neutral density, EUV attenuation, and source rates
-x = SVector(1.5, 0.0, 0.0)
-r = 1.5
-n_tot = exo_density(exo, r)
-atten = photo_attenuation(exo, x, r)
-q_photo = photoionization_rate(1.0e-6, n_tot, atten)
-q_cx = charge_exchange_rate(2.0e-19, 5.0, n_tot, 4.0e5)
-
-# 4. Adaptive box quadrature outside r_cut = 1.0
-sumN = zeros(n_components(exo))
-sumNA = zeros(n_components(exo))
-vol = integrate_exosphere_box!(sumN, sumNA, exo, x, SVector(0.2, 0.2, 0.2), 0, 1.0)
+sumN = zeros(n_components(exo_legacy))
+sumNA = zeros(n_components(exo_legacy))
+vol = integrate_exosphere_box!(sumN, sumNA, exo_legacy, x, SVector(0.2, 0.2, 0.2), 0, 1.0)
 ```
 
 ## Examples
@@ -77,16 +102,9 @@ vol = integrate_exosphere_box!(sumN, sumNA, exo, x, SVector(0.2, 0.2, 0.2), 0, 1
 julia --project=/path/to/env-with-CairoMakie examples/planetary_exosphere_euv.jl
 ```
 
-## Public API
-
-- **Neutral profiles**: `AbstractNeutralProfile`, `ExponentialProfile`, `PowerLawProfile`, `ChamberlainProfile`, `ExosphereProfile`, `exosphere_profile`, `neutral_density`, `local_scale_height`.
-- **Multi-component exosphere & attenuation**: `NeutralComponentCode`, `ShadowCylinder`, `OpticalDepth`, `ExosphereModel`, `build_exosphere_model`, `in_shadow`, `shadow_factor`, `n_components`, `exo_component_density`, `exo_density`, `exo_scale_height`, `chapman_function`, `photo_attenuation`.
-- **Ion–neutral source rates**: `photoionization_rate`, `charge_exchange_rate`.
-- **Adaptive quadrature**: `integrate_exosphere_box!`.
-
 ## Testing & Benchmarking
 
-Run the unit, `Aqua.jl`, and `ExplicitImports.jl` quality test suite:
+Run the full unit, conservation, AD, extension, `Aqua.jl`, and `ExplicitImports.jl` test suite:
 
 ```bash
 julia --project=Exosphere.jl -e 'using Pkg; Pkg.test()'
@@ -95,16 +113,7 @@ julia --project=Exosphere.jl -e 'using Pkg; Pkg.test()'
 Benchmarks are defined in [`benchmark/benchmarks.jl`](benchmark/benchmarks.jl) using `BenchmarkTools.jl` and tracked across revisions with [`AirspeedVelocity.jl`](https://github.com/MilesCranmer/AirspeedVelocity.jl):
 
 ```bash
-# Compare the current working tree against main using the AirspeedVelocity CLI
 cd Exosphere.jl && benchpkg Exosphere --rev=main,dirty
-```
-
-Or from Julia:
-
-```julia
-using AirspeedVelocity
-
-AirspeedVelocity.benchmark("Exosphere", ["main", "dirty"]; path = "/path/to/Exosphere.jl")
 ```
 
 ## License

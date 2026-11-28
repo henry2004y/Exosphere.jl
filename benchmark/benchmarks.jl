@@ -1,5 +1,6 @@
 using BenchmarkTools
 using Exosphere
+using Random: MersenneTwister
 using StaticArrays
 
 const SUITE = BenchmarkGroup()
@@ -38,6 +39,33 @@ let
         planet_radius = 1.0, components = comps, optical_depth = od_chapman, inner_radius = 1.0,
     )
 
+    # Tuple-backed isbits ExosphereModel (same 3 species)
+    pop1 = NeutralPopulation(
+        NeutralSpecies(; m = 16.0), ExponentialProfile(100.0, 1.0, 0.2);
+        temperature = ConstantTemperature(0.01),
+    )
+    pop2 = NeutralPopulation(
+        NeutralSpecies(; m = 1.0), PowerLawProfile(10.0, 1.0, 2.0);
+        temperature = ConstantTemperature(0.01),
+    )
+    pop3 = NeutralPopulation(
+        NeutralSpecies(; m = 4.0), ChamberlainProfile(50.0, 1.0, 1.5);
+        temperature = ConstantTemperature(0.01),
+    )
+    exo_tuple = ExosphereModel(
+        pop1, pop2, pop3;
+        planet_radius = 1.0,
+        optical_depth = OpticalDepth(; cross_sections = (0.05, 0.01, 0.02), chapman = true),
+        inner_radius = 1.0,
+    )
+    exo_ray = ExosphereModel(
+        pop1, pop2, pop3;
+        planet_radius = 1.0,
+        attenuation = RayOpticalDepth(;
+            cross_sections = (0.05, 0.01, 0.02), s_max = 6.0, planet_radius = 1.0, n_quad = 8,
+        ),
+    )
+
     x_day = SVector{3, Float64}(1.5, 0.0, 0.0)
     r_day = hypot(x_day[1], x_day[2], x_day[3])
     x_night = SVector{3, Float64}(-1.5, 0.5, 0.0)
@@ -56,8 +84,9 @@ let
     SUITE["profiles"]["exosphere_profile_3d"] = @benchmarkable $ep(1.5, 0.2, -0.1)
     SUITE["profiles"]["haser_profile_3d"] = @benchmarkable $haser(3.0, 0.5, -0.2)
     SUITE["profiles"]["exo_density_3comp"] = @benchmarkable exo_density($exo_chapman, 1.5)
+    SUITE["profiles"]["exo_density_3comp_tuple"] = @benchmarkable exo_density($exo_tuple, 1.5)
 
-    # 2. Shadow & EUV optical-depth / Chapman attenuation
+    # 2. Shadow & EUV optical-depth / Chapman / Ray attenuation
     SUITE["attenuation"] = BenchmarkGroup(["attenuation"])
     SUITE["attenuation"]["shadow_factor_day"] = @benchmarkable shadow_factor($sc, $x_day)
     SUITE["attenuation"]["shadow_factor_night"] = @benchmarkable shadow_factor($sc, $x_night)
@@ -78,8 +107,14 @@ let
     SUITE["attenuation"]["photo_attenuation_chapman_terminator"] = @benchmarkable photo_attenuation(
         $exo_chapman, $x_term, $r_term,
     )
+    SUITE["attenuation"]["photo_attenuation_chapman_tuple"] = @benchmarkable photo_attenuation(
+        $exo_tuple, $x_term, $r_term,
+    )
+    SUITE["attenuation"]["photo_attenuation_ray8_day"] = @benchmarkable photo_attenuation(
+        $exo_ray, $x_day,
+    )
 
-    # 3. Ion-neutral source rates
+    # 3. Ion-neutral source rates, VDF sampling & one-way vs two-way coupling
     pts = [
         SVector{3, Float64}(
             1.4 * cos(0.00628 * i),
@@ -87,6 +122,15 @@ let
             0.2 * sin(0.01256 * i),
         ) for i in 1:1000
     ]
+    ion = PlasmaState(5.0, SVector(-2.0, 0.3, 0.0), 0.1, 16.0)
+    channels = (Photoionization(1.0e-6), ResonantChargeExchange(2.0e-3))
+    rng = MersenneTwister(123)
+    maxw = Maxwellian(NeutralSpecies(; m = 16.0); T = 0.01)
+
+    grid = CartesianNeutralGrid((-2.0, -2.0, -2.0), (0.25, 0.25, 0.25), (17, 17, 17))
+    field_2way = GriddedNeutralField(grid, 3; masses = (16.0, 1.0, 4.0), two_way = true)
+    sample_to_grid!(field_2way, exo_tuple)
+
     SUITE["sources"] = BenchmarkGroup(["sources"])
     SUITE["sources"]["photoionization_rate"] = @benchmarkable photoionization_rate(1.0e-6, 100.0, 0.85)
     SUITE["sources"]["charge_exchange_rate"] = @benchmarkable charge_exchange_rate(2.0e-19, 5.0, 100.0, 4.0e5)
@@ -100,6 +144,13 @@ let
         end
         s
     end
+    SUITE["sources"]["couple_point_1way_tuple"] = @benchmarkable couple_point!(
+        $exo_tuple, $x_day, $channels, $ion; species = 1,
+    )
+    SUITE["sources"]["couple_point_2way_cic"] = @benchmarkable couple_point!(
+        $field_2way, $x_day, $channels, $ion; species = 1,
+    ) setup = reset_sources!($field_2way)
+    SUITE["sources"]["vdf_maxwellian_rand"] = @benchmarkable rand($rng, $maxw)
 
     # 4. Adaptive octree dual-cell box quadrature
     sumN = zeros(3)
@@ -107,6 +158,10 @@ let
     SUITE["quadrature"] = BenchmarkGroup(["quadrature"])
     SUITE["quadrature"]["box_exterior_3d"] = @benchmarkable integrate_exosphere_box!(
         $sumN, $sumNA, $exo_chapman, $(SVector{3, Float64}(1.5, 0.0, 0.0)),
+        $(SVector{3, Float64}(0.2, 0.2, 0.2)), 0, 1.0,
+    ) setup = (fill!($sumN, 0.0); fill!($sumNA, 0.0))
+    SUITE["quadrature"]["box_exterior_3d_tuple"] = @benchmarkable integrate_exosphere_box!(
+        $sumN, $sumNA, $exo_tuple, $(SVector{3, Float64}(1.5, 0.0, 0.0)),
         $(SVector{3, Float64}(0.2, 0.2, 0.2)), 0, 1.0,
     ) setup = (fill!($sumN, 0.0); fill!($sumNA, 0.0))
     SUITE["quadrature"]["box_straddling_3d"] = @benchmarkable integrate_exosphere_box!(
