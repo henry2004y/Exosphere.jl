@@ -515,19 +515,57 @@ end
     return local_vdf(p, x; t = t, kB = kB)
 end
 
-# Tuple recursive dispatch helpers (0 heap allocations, GPU-safe, @inferred)
-@inline function _at_component(f::F, comps::Tuple{C, Vararg}, c::Int, idx::Int) where {F, C}
-    idx == c && return f(comps[1])
-    return _at_component(f, Base.tail(comps), c, idx + 1)
+# Zero-closure tuple recursive dispatch helpers (0 heap allocations on Julia 1.11+, GPU-safe)
+@inline function _at_mass(comps::Tuple{C, Vararg}, ::Type{FT}, c::Int, idx::Int) where {C, FT}
+    idx == c && return _component_mass(comps[1], FT)
+    return _at_mass(Base.tail(comps), FT, c, idx + 1)
 end
+@inline _at_mass(::Tuple{}, ::Type{FT}, c::Int, ::Int) where {FT} = throw(BoundsError((), c))
 
-@inline _at_component(::F, ::Tuple{}, c::Int, ::Int) where {F} = throw(BoundsError((), c))
-@inline _at_component(f::F, comps::Tuple, c::Int) where {F} = _at_component(f, comps, c, 1)
-
-@inline function _at_component_vec(f::F, comps::AbstractVector, c::Int) where {F}
-    1 <= c <= length(comps) || throw(BoundsError(comps, c))
-    return @inbounds f(comps[c])
+@inline function _at_scale_height(comps::Tuple{C, Vararg}, r::Real, c::Int, idx::Int) where {C}
+    idx == c && return _component_scale_height(comps[1], r)
+    return _at_scale_height(Base.tail(comps), r, c, idx + 1)
 end
+@inline _at_scale_height(::Tuple{}, ::Real, c::Int, ::Int) = throw(BoundsError((), c))
+
+@inline function _at_density_r(
+        comps::Tuple{C, Vararg}, Rp::Real, inv_Rp::Real, r::Real, inv_r::Real, c::Int, idx::Int,
+    ) where {C}
+    idx == c && return _component_density(comps[1], Rp, inv_Rp, r, inv_r)
+    return _at_density_r(Base.tail(comps), Rp, inv_Rp, r, inv_r, c, idx + 1)
+end
+@inline _at_density_r(::Tuple{}, ::Real, ::Real, ::Real, ::Real, c::Int, ::Int) =
+    throw(BoundsError((), c))
+
+@inline function _at_density_3d(
+        comps::Tuple{C, Vararg}, Rp::Real, inv_Rp::Real, x::SVector{3}, r::Real, inv_r::Real,
+        t, c::Int, idx::Int,
+    ) where {C}
+    idx == c && return _component_density_3d(comps[1], Rp, inv_Rp, x, r, inv_r, t)
+    return _at_density_3d(Base.tail(comps), Rp, inv_Rp, x, r, inv_r, t, c, idx + 1)
+end
+@inline _at_density_3d(::Tuple{}, ::Real, ::Real, ::SVector{3}, ::Real, ::Real, t, c::Int, ::Int) =
+    throw(BoundsError((), c))
+
+@inline function _at_state(
+        comps::Tuple{C, Vararg}, Rp::Real, inv_Rp::Real, x::SVector{3}, r::Real, inv_r::Real,
+        t, kB::Number, c::Int, idx::Int,
+    ) where {C}
+    idx == c && return _component_state(comps[1], Rp, inv_Rp, x, r, inv_r, t, kB)
+    return _at_state(Base.tail(comps), Rp, inv_Rp, x, r, inv_r, t, kB, c, idx + 1)
+end
+@inline _at_state(
+    ::Tuple{}, ::Real, ::Real, ::SVector{3}, ::Real, ::Real, t, ::Number, c::Int, ::Int,
+) = throw(BoundsError((), c))
+
+@inline function _at_vdf(
+        comps::Tuple{C, Vararg}, x::SVector{3}, t, kB::Number, c::Int, idx::Int,
+    ) where {C}
+    idx == c && return _component_vdf(comps[1], x, t, kB)
+    return _at_vdf(Base.tail(comps), x, t, kB, c, idx + 1)
+end
+@inline _at_vdf(::Tuple{}, ::SVector{3}, t, ::Number, c::Int, ::Int) =
+    throw(BoundsError((), c))
 
 @inline function _scale_height_at(
         comps::AbstractVector, ::Union{Nothing, NoAttenuation, ShadowCylinder, RayOpticalDepth},
@@ -552,7 +590,7 @@ end
     )
     T = float(typeof(r))
     r <= zero(r) && return zero(T)
-    return T(_at_component(comp -> _component_scale_height(comp, r), comps, c))
+    return T(_at_scale_height(comps, r, c, 1))
 end
 
 @inline function _scale_height_at(comps::Tuple, od::OpticalDepth, r::Real, c::Int)
@@ -561,7 +599,7 @@ end
     @inbounds oh = od.H[c]
     oh > zero(oh) && return T(oh)
     r <= zero(r) && return zero(T)
-    return T(_at_component(comp -> _component_scale_height(comp, r), comps, c))
+    return T(_at_scale_height(comps, r, c, 1))
 end
 
 @inline _scale_height_comp(comp, ::Union{Nothing, NoAttenuation, ShadowCylinder, RayOpticalDepth}, r::Real, ::Int) =
@@ -658,7 +696,7 @@ function build_exosphere_model(;
                 h = _scale_height_at(comps, od_eff, Rp_f, i)
                 (od_eff.sigma[i] <= 0 || h <= 0) && continue
                 n_i = comps isa Tuple ?
-                    _at_component(c -> _component_density(c, Rp_f, inv_Rp, Rp_f, inv_Rp), comps, i) :
+                    _at_density_r(comps, Rp_f, inv_Rp, Rp_f, inv_Rp, i, 1) :
                     _component_density(comps[i], Rp_f, inv_Rp, Rp_f, inv_Rp)
                 τ = n_i * od_eff.sigma[i] * h
                 τ > best && ((best, bi) = (τ, i))
@@ -691,11 +729,13 @@ Return the number of neutral components (species/populations) in `exo`.
 @inline n_components(exo::ExosphereModel) = length(exo.comps)
 
 @inline function species_mass(exo::ExosphereModel{FT, <:Tuple}, c::Integer = 1) where {FT}
-    return _at_component(comp -> _component_mass(comp, FT), exo.comps, Int(c))
+    return _at_mass(exo.comps, FT, Int(c), 1)
 end
 
 @inline function species_mass(exo::ExosphereModel{FT, <:AbstractVector}, c::Integer = 1) where {FT}
-    return _at_component_vec(comp -> _component_mass(comp, FT), exo.comps, Int(c))
+    ci = Int(c)
+    1 <= ci <= length(exo.comps) || throw(BoundsError(exo.comps, ci))
+    return @inbounds _component_mass(exo.comps[ci], FT)
 end
 
 """
@@ -707,7 +747,7 @@ Number density of neutral component `c` at radius `r` (zero inside `exo.Rp`).
     T = float(promote_type(FT, typeof(r)))
     r < exo.Rp && return zero(T)
     inv_r = r > zero(r) ? inv(T(r)) : zero(T)
-    return T(_at_component(p -> _component_density(p, exo.Rp, exo.inv_Rp, r, inv_r), exo.comps, Int(c)))
+    return T(_at_density_r(exo.comps, exo.Rp, exo.inv_Rp, T(r), inv_r, Int(c), 1))
 end
 
 @inline function exo_component_density(exo::ExosphereModel{FT, <:AbstractVector}, r::Real, c::Integer) where {FT}
@@ -790,13 +830,7 @@ end
     if species === nothing
         return T(_sum_exo_3d(exo.comps, exo.Rp, exo.inv_Rp, xv, T(r), inv_r, t))
     end
-    return T(
-        _at_component(
-            p -> _component_density_3d(p, exo.Rp, exo.inv_Rp, xv, T(r), inv_r, t),
-            exo.comps,
-            Int(species),
-        ),
-    )
+    return T(_at_density_3d(exo.comps, exo.Rp, exo.inv_Rp, xv, T(r), inv_r, t, Int(species), 1))
 end
 
 @inline function neutral_density(
@@ -843,11 +877,7 @@ end
     r = _safe_norm(d)
     T = float(promote_type(FT, typeof(r)))
     inv_r = r > zero(r) ? inv(T(r)) : zero(T)
-    return _at_component(
-        p -> _component_state(p, exo.Rp, exo.inv_Rp, xv, T(r), inv_r, t, kB),
-        exo.comps,
-        Int(species),
-    )
+    return _at_state(exo.comps, exo.Rp, exo.inv_Rp, xv, T(r), inv_r, t, kB, Int(species), 1)
 end
 
 @inline function neutral_state(
@@ -868,7 +898,7 @@ end
         t = nothing, species::Integer = 1, kB::Number = 1,
     ) where {FT}
     xv = _as_svec3(x)
-    return _at_component(p -> _component_vdf(p, xv, t, kB), exo.comps, Int(species))
+    return _at_vdf(exo.comps, xv, t, kB, Int(species), 1)
 end
 
 @inline function local_vdf(
@@ -933,10 +963,39 @@ end
         σ <= zero(σ) && return zero(T)
         h = _scale_height_at(exo.comps, od, rf, only)
         h <= zero(h) && return zero(T)
-        n = _at_component(c -> _component_density(c, Rp, inv_Rp, rf, inv_r), exo.comps, only)
+        n = _at_density_r(exo.comps, Rp, inv_Rp, rf, inv_r, only, 1)
         return T(n * σ * h)
     end
     return _sum_vert_tau(exo.comps, od, Rp, inv_Rp, rf, inv_r, 1)
+end
+
+@inline function _sum_ray_ext(
+        comps::Tuple{C}, sigma::AbstractVector, Rp, inv_Rp, xq::SVector{3}, r, inv_r, t,
+        idx::Int,
+    ) where {C}
+    @inbounds σ = sigma[idx]
+    T = float(promote_type(typeof(σ), typeof(r)))
+    σ <= zero(σ) && return zero(T)
+    return T(σ * _component_density_3d(comps[1], Rp, inv_Rp, xq, r, inv_r, t))
+end
+
+@inline function _sum_ray_ext(
+        comps::Tuple{C, Vararg}, sigma::AbstractVector, Rp, inv_Rp, xq::SVector{3}, r, inv_r,
+        t, idx::Int,
+    ) where {C}
+    return _sum_ray_ext((comps[1],), sigma, Rp, inv_Rp, xq, r, inv_r, t, idx) +
+        _sum_ray_ext(Base.tail(comps), sigma, Rp, inv_Rp, xq, r, inv_r, t, idx + 1)
+end
+
+@inline function _ray_extinction_at(
+        exo::ExosphereModel{FT, <:Tuple}, sigma::AbstractVector, xq::SVector{3}, t,
+    ) where {FT}
+    d = _relative_pos(exo.center, xq)
+    r = _safe_norm(d)
+    T = float(promote_type(FT, eltype(sigma), typeof(r)))
+    r < exo.Rp && return zero(T)
+    inv_r = r > zero(r) ? inv(T(r)) : zero(T)
+    return _sum_ray_ext(exo.comps, sigma, exo.Rp, exo.inv_Rp, xq, T(r), inv_r, t, 1)
 end
 
 @inline @muladd function _vertical_optical_depth(
